@@ -6,6 +6,8 @@ simulation_app = SimulationApp({"headless": False})
 import time
 import os
 import sys
+import zmq
+import json
 
 # Add the 'isaac_sim' folder to path so we can import built-in curobo helpers
 sys.path.append(os.path.join(os.path.dirname(__file__), "isaac_sim"))
@@ -108,6 +110,9 @@ def demo_full_config_mpc():
     # 8. usd_asset_path: Path to an external USD file you want to load (e.g., a table).
     # Replace with your actual path. Example: "/home/shan/assets/table.usd"
     usd_asset_path = "/home/shan/isaac-sim/isaac_sim_curobot/models/table/usdz/table_with_collision.usd"
+
+    # 9. zmq_port: The port used by the ZeroMQ publisher.
+    zmq_port = 5555
     # =========================================================================
 
     # -------------------------------------------------------------
@@ -175,6 +180,12 @@ def demo_full_config_mpc():
     # Formulate a set of goal buffers optimized for parallel MPC evaluation 
     goal_buffer = mpc.setup_solve_single(goal, 1)
 
+    # Initialize ZeroMQ Publisher
+    zmq_context = zmq.Context()
+    zmq_socket = zmq_context.socket(zmq.PUB)
+    zmq_socket.bind(f"tcp://*:{zmq_port}")
+    print(f"ZMQ Publisher bound to port {zmq_port}")
+
     tstep = 0
     traj_list = []
     mpc_time = []
@@ -239,10 +250,19 @@ def demo_full_config_mpc():
         traj_list.append(result.action.get_state_tensor())
         tstep += 1
             
-        # -------------------------------------------------------------
         # APPLY ACTION ONTO THE VISUAL ROBOT
         # -------------------------------------------------------------
         cmd_state = result.action
+        
+        # Publish current joint positions via ZeroMQ
+        # We use current_state.joint_names and result.action.position
+        joint_data = {
+            "timestamp": time.time(),
+            "joints": joint_names,
+            "positions": cmd_state.position.view(-1).cpu().numpy().tolist()
+        }
+        zmq_socket.send_json(joint_data)
+
         art_action = ArticulationAction(
             cmd_state.position.view(-1).cpu().numpy(),
             joint_indices=idx_list,
