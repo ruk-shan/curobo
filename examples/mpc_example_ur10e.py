@@ -46,7 +46,7 @@ def plot_traj(trajectory, dof):
     plt.show()
 
 
-def draw_points(rollouts: torch.Tensor):
+def draw_points(rollouts: torch.Tensor, robot_origin: np.ndarray = np.zeros(3)):
     if rollouts is None:
         return
     
@@ -57,7 +57,10 @@ def draw_points(rollouts: torch.Tensor):
         
     draw = _debug_draw.acquire_debug_draw_interface()
     draw.clear_points()
-    cpu_rollouts = rollouts.cpu().numpy()
+    
+    # Offset rollout points by robot_origin so they align with the shifted robot base
+    cpu_rollouts = (rollouts.cpu().numpy()) + robot_origin
+    
     b, h, _ = cpu_rollouts.shape
     point_list = []
     colors = []
@@ -136,10 +139,12 @@ def demo_full_config_mpc():
     )
     retract_pose = Pose(state.ee_pos_seq, quaternion=state.ee_quat_seq)
     
-    # Create the interactive target cube initialized at the computed target position
+    # Create the interactive target cube initialized at the world position (local + origin)
+    initial_target_pos = retract_pose.position.view(-1).cpu().numpy() + robot_origin
+    
     target = cuboid.VisualCuboid(
         "/World/target",
-        position=retract_pose.position.view(-1).cpu().numpy(),
+        position=initial_target_pos,
         orientation=retract_pose.quaternion.view(-1).cpu().numpy(),
         color=np.array([1.0, 0, 0]),
         size=0.05,
@@ -179,7 +184,7 @@ def demo_full_config_mpc():
     
     # Control loop running MPC sequentially and Rendering 
     while simulation_app.is_running():
-        draw_points(mpc.get_visual_rollouts())
+        draw_points(mpc.get_visual_rollouts(), robot_origin)
         
         # Advance the world render loop one frame
         my_world.step(render=True)
