@@ -1,0 +1,7 @@
+mppi:
+  num_particles: 1024      # Increase rollouts for better exploration
+  n_iters: 20              # Increase iterations per step for better convergence
+cost:
+  pose_cfg:
+    # Increase the weight of the pose cost to prioritize accuracy over smoothness
+    weight: [200.0, 1000.0, 50.0, 50.0] 

@@ -91,7 +91,7 @@ def demo_full_config_mpc():
     robot_file = "ur10e.yml"
     
     # 3. step_dt: The timestep (in seconds) used internally by the MPC solver.
-    step_dt = 0.03
+    step_dt = 0.02
     
     # 4. goal_offset: How much to perturb the joint positions to generate a random 
     #    reachable goal pose using forward kinematics limit checks.
@@ -99,7 +99,7 @@ def demo_full_config_mpc():
     
     # 5. pose_error_tolerance: Stopping criteria specifying the maximum allowed 
     #    error to consider reaching the goal successfully.
-    pose_error_tolerance = 0.01
+    pose_error_tolerance = 0.005 # Tightened from 0.01 for more accuracy
     
     # 6. max_steps: Hard limit to prevent the solver loop from running infinitely.
     max_steps = 1000
@@ -144,6 +144,9 @@ def demo_full_config_mpc():
     mpc_config = MpcSolverConfig.load_from_robot_config(
         robot_cfg,
         world_file,
+        use_cuda_graph=True,
+        use_cuda_graph_metrics=True,
+        override_particle_file=join_path(os.path.dirname(__file__), "mpc_accuracy_override.yml"),
         store_rollouts=True,
         step_dt=step_dt,
     )
@@ -277,6 +280,10 @@ def demo_full_config_mpc():
         
         # Advance the MPC step by solving for an optimal action sequence 
         result = mpc.step(current_state, 1)
+
+        # Print current Euclidean distance error to the terminal
+        if tstep % 20 == 0:
+            print(f"[{tstep}] Pose Error: {result.metrics.pose_error.item():.5f} m")
 
         # Ensure GPU synchronization before calculating performance times
         torch.cuda.synchronize()
