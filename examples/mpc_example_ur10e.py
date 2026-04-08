@@ -16,6 +16,7 @@ import torch
 from omni.isaac.core import World
 from omni.isaac.core.objects import cuboid
 from omni.isaac.core.utils.types import ArticulationAction
+from omni.isaac.core.utils.stage import add_reference_to_stage
 from isaac_sim.helper import add_robot_to_scene
 
 # CuRobo
@@ -103,6 +104,10 @@ def demo_full_config_mpc():
 
     # 7. robot_origin: Specify the robot's base position in world coordinates [x, y, z].
     robot_origin = np.array([0.0, 0.0, 0.9])
+
+    # 8. usd_asset_path: Path to an external USD file you want to load (e.g., a table).
+    # Replace with your actual path. Example: "/home/shan/assets/table.usd"
+    usd_asset_path = "/home/shan/isaac-sim/isaac_sim_curobot/models/table/usdz/table_with_collision.usd"
     # =========================================================================
 
     # -------------------------------------------------------------
@@ -110,6 +115,13 @@ def demo_full_config_mpc():
     # -------------------------------------------------------------
     my_world = World(stage_units_in_meters=1.0)
     my_world.scene.add_default_ground_plane()
+
+    # ADD EXTERNAL USD ASSET (If path exists)
+    if os.path.exists(usd_asset_path):
+        add_reference_to_stage(usd_path=usd_asset_path, prim_path="/World/ExternalAsset")
+        print(f"Successfully loaded USD asset from: {usd_asset_path}")
+    else:
+        print(f"Note: USD placeholder path not found, skipping asset load: {usd_asset_path}")
 
     # Load robot configuration details from specified YAML config
     robot_cfg_dict = load_yaml(join_path(get_robot_configs_path(), robot_file))["robot_cfg"]
