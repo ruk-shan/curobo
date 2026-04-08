@@ -111,8 +111,11 @@ def demo_full_config_mpc():
     # Replace with your actual path. Example: "/home/shan/assets/table.usd"
     usd_asset_path = "/home/shan/isaac-sim/isaac_sim_curobot/models/table/usdz/table_with_collision.usd"
 
-    # 9. zmq_port: The port used by the ZeroMQ publisher.
+    # 9. zmq_port: The port used by the ZeroMQ publisher (Outgoing joints).
     zmq_port = 5555
+
+    # 10. zmq_target_port: The port used to receive remote targets (Incoming).
+    zmq_target_port = 5556
     # =========================================================================
 
     # -------------------------------------------------------------
@@ -186,6 +189,12 @@ def demo_full_config_mpc():
     zmq_socket.bind(f"tcp://*:{zmq_port}")
     print(f"ZMQ Publisher bound to port {zmq_port}")
 
+    # Initialize ZeroMQ Target Subscriber
+    zmq_target_socket = zmq_context.socket(zmq.SUB)
+    zmq_target_socket.connect(f"tcp://localhost:{zmq_target_port}")
+    zmq_target_socket.setsockopt_string(zmq.SUBSCRIBE, "")
+    print(f"ZMQ Target Subscriber connected to port {zmq_target_port}")
+
     tstep = 0
     traj_list = []
     mpc_time = []
@@ -204,9 +213,38 @@ def demo_full_config_mpc():
     idx_list = [robot.get_dof_index(x) for x in joint_names]
     
     past_pose = None
+    remote_control_enabled = False
     
     # Control loop running MPC sequentially and Rendering 
     while simulation_app.is_running():
+        # Check for remote ZMQ target commands (Non-blocking)
+        try:
+            target_msg = zmq_target_socket.recv_json(flags=zmq.NOBLOCK)
+            
+            # Update the control mode based on message flag
+            remote_control_enabled = target_msg.get("use_zmq_target", False)
+            
+            if remote_control_enabled:
+                zmq_pos = np.array(target_msg["position"])
+                zmq_ori = np.array(target_msg["orientation"])
+                
+                # Apply incoming command to the visual target object center
+                target.set_world_pose(position=zmq_pos, orientation=zmq_ori)
+                
+                # Update MPC goal buffer immediately
+                # (Note: local_position calculation handles the robot offset)
+                local_position = zmq_pos - robot_origin
+                ik_goal = Pose(
+                    position=tensor_args.to_device(local_position),
+                    quaternion=tensor_args.to_device(zmq_ori),
+                )
+                goal_buffer.goal_pose.copy_(ik_goal)
+                mpc.update_goal(goal_buffer)
+                
+        except zmq.Again:
+            # No new message in the queue, continue normally
+            pass
+
         draw_points(mpc.get_visual_rollouts(), robot_origin)
         
         # Advance the world render loop one frame
@@ -214,24 +252,26 @@ def demo_full_config_mpc():
         if not my_world.is_playing():
             continue
             
-        # Dynamically read the cube's position from the Isaac Sim viewer
-        cube_position, cube_orientation = target.get_world_pose()
+        # If remote control is disabled, track the cube manually (Local GUI Mode)
+        if not remote_control_enabled:
+            # Dynamically read the cube's position from the Isaac Sim viewer
+            cube_position, cube_orientation = target.get_world_pose()
 
-        if past_pose is None:
-            past_pose = cube_position + 1.0
+            if past_pose is None:
+                past_pose = cube_position + 1.0
 
-        # If the user drags the target cube, update the goal immediately
-        if np.linalg.norm(cube_position - past_pose) > 1e-3:
-            # We subtract the robot origin because the MPC solver operates in the robot's local frame
-            local_position = cube_position - robot_origin
-            
-            ik_goal = Pose(
-                position=tensor_args.to_device(local_position),
-                quaternion=tensor_args.to_device(cube_orientation),
-            )
-            goal_buffer.goal_pose.copy_(ik_goal)
-            mpc.update_goal(goal_buffer)
-            past_pose = cube_position
+            # If the user drags the target cube, update the goal immediately
+            if np.linalg.norm(cube_position - past_pose) > 1e-3:
+                # We subtract the robot origin because the MPC solver operates in the robot's local frame
+                local_position = cube_position - robot_origin
+                
+                ik_goal = Pose(
+                    position=tensor_args.to_device(local_position),
+                    quaternion=tensor_args.to_device(cube_orientation),
+                )
+                goal_buffer.goal_pose.copy_(ik_goal)
+                mpc.update_goal(goal_buffer)
+                past_pose = cube_position
             
         st_time = time.time()
         
@@ -254,12 +294,15 @@ def demo_full_config_mpc():
         # -------------------------------------------------------------
         cmd_state = result.action
         
-        # Publish current joint positions via ZeroMQ
-        # We use current_state.joint_names and result.action.position
+        # Publish current joint positions and target cube pose via ZeroMQ
+        curr_cube_pos, curr_cube_ori = target.get_world_pose()
         joint_data = {
             "timestamp": time.time(),
             "joints": joint_names,
-            "positions": cmd_state.position.view(-1).cpu().numpy().tolist()
+            "positions": cmd_state.position.view(-1).cpu().numpy().tolist(),
+            "target_position": curr_cube_pos.tolist(),
+            "target_orientation": curr_cube_ori.tolist(),
+            "remote_control_active": remote_control_enabled
         }
         zmq_socket.send_json(joint_data)
 
