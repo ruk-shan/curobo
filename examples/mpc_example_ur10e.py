@@ -262,9 +262,12 @@ def demo_full_config_mpc():
 
             if past_pose is None:
                 past_pose = cube_position + 1.0
+                past_orientation = cube_orientation + 1.0
 
-            # If the user drags the target cube, update the goal immediately
-            if np.linalg.norm(cube_position - past_pose) > 1e-3:
+            # If the user drags OR rotates the target cube, update the goal immediately
+            if (np.linalg.norm(cube_position - past_pose) > 1e-3 or 
+                np.linalg.norm(cube_orientation - past_orientation) > 1e-3):
+                
                 # We subtract the robot origin because the MPC solver operates in the robot's local frame
                 local_position = cube_position - robot_origin
                 
@@ -275,6 +278,7 @@ def demo_full_config_mpc():
                 goal_buffer.goal_pose.copy_(ik_goal)
                 mpc.update_goal(goal_buffer)
                 past_pose = cube_position
+                past_orientation = cube_orientation
             
         st_time = time.time()
         
