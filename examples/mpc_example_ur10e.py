@@ -43,10 +43,35 @@ def plot_traj(trajectory, dof):
         axs[2].plot(qdd[:, i], label=str(i))
     plt.legend()
     plt.savefig("test.png")
-    # plt.show()
+    plt.show()
+
+
+def draw_points(rollouts: torch.Tensor):
+    if rollouts is None:
+        return
+    
+    try:
+        from omni.isaac.debug_draw import _debug_draw
+    except ImportError:
+        from isaacsim.util.debug_draw import _debug_draw
+        
+    draw = _debug_draw.acquire_debug_draw_interface()
+    draw.clear_points()
+    cpu_rollouts = rollouts.cpu().numpy()
+    b, h, _ = cpu_rollouts.shape
+    point_list = []
+    colors = []
+    for i in range(b):
+        point_list += [
+            (cpu_rollouts[i, j, 0], cpu_rollouts[i, j, 1], cpu_rollouts[i, j, 2]) for j in range(h)
+        ]
+        colors += [(1.0 - (i + 1.0 / b), 0.3 * (i + 1.0 / b), 0.0, 0.1) for _ in range(h)]
+    sizes = [10.0 for _ in range(b * h)]
+    draw.draw_points(point_list, colors, sizes)
+
 
 def demo_full_config_mpc():
-    PLOT = False # Disabled plot by default as we have visualization now
+    PLOT = True # Enabled plotting to show popup at end of run
     # Basic tensor device configuration indicating which device to use (e.g. CPU or GPU)
     tensor_args = TensorDeviceType()
     
@@ -72,6 +97,9 @@ def demo_full_config_mpc():
     
     # 6. max_steps: Hard limit to prevent the solver loop from running infinitely.
     max_steps = 1000
+
+    # 7. robot_origin: Specify the robot's base position in world coordinates [x, y, z].
+    robot_origin = np.array([0.0, 0.0, 0.9])
     # =========================================================================
 
     # -------------------------------------------------------------
@@ -83,8 +111,8 @@ def demo_full_config_mpc():
     # Load robot configuration details from specified YAML config
     robot_cfg_dict = load_yaml(join_path(get_robot_configs_path(), robot_file))["robot_cfg"]
     
-    # Spawn the Robot visually inside the Isaac Environment 
-    robot, robot_prim_path = add_robot_to_scene(robot_cfg_dict, my_world)
+    # Spawn the Robot visually inside the Isaac Environment at the specified origin
+    robot, robot_prim_path = add_robot_to_scene(robot_cfg_dict, my_world, position=robot_origin)
     articulation_controller = robot.get_articulation_controller()
     
     robot_cfg = RobotConfig.from_dict(robot_cfg_dict, tensor_args)
@@ -151,6 +179,7 @@ def demo_full_config_mpc():
     
     # Control loop running MPC sequentially and Rendering 
     while simulation_app.is_running():
+        draw_points(mpc.get_visual_rollouts())
         
         # Advance the world render loop one frame
         my_world.step(render=True)
@@ -165,8 +194,11 @@ def demo_full_config_mpc():
 
         # If the user drags the target cube, update the goal immediately
         if np.linalg.norm(cube_position - past_pose) > 1e-3:
+            # We subtract the robot origin because the MPC solver operates in the robot's local frame
+            local_position = cube_position - robot_origin
+            
             ik_goal = Pose(
-                position=tensor_args.to_device(cube_position),
+                position=tensor_args.to_device(local_position),
                 quaternion=tensor_args.to_device(cube_orientation),
             )
             goal_buffer.goal_pose.copy_(ik_goal)
